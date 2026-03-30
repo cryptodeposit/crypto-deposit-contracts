@@ -1,0 +1,25 @@
+[chain]
+name = "bsc"
+chain_id = 56
+
+# WARNING: BSC stablecoins are Binance-Peg tokens with 18 decimals (not 6!)
+# All amount parameters below use 18-decimal precision.
+[tokens.USDC]
+address = "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"
+decimals = 18
+
+[tokens.USDT]
+address = "0x55d398326f99059fF775485246999027B3197955"
+decimals = 18
+
+[params]
+travel_rule_threshold = 1000000000000000000000000  # $1M (18 decimals)
+deposit_cap = 50000000000000000000000              # $50k per deposit (18 decimals)
+reserve_ratio_bps = 800                            # 8% (Basel III)
+default_apy_bps = 450                              # 4.5%
+facility_equity = 10000000000000000000000000        # $10M (18 decimals)
+travel_rule_ttl = 86400                            # 24 hours
+
+[explorer]
+api_env = "BSCSCAN_API_KEY"
+url = "https://api.bscscan.com/api"

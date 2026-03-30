@@ -1,0 +1,56 @@
+
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.26"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+bytecode_hash = "none"
+cbor_metadata = false
+remappings = [
+    "crypto-deposit-contracts/=src/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+]
+
+# Multi-chain fork tests (run via scripts/test_tenderly_forks.sh)
+# Uses FORK_RPC_URL env var — tests call vm.createSelectFork() directly
+[profile.fork]
+match_path = "test/fork/chains/**"
+
+# TRON (TVM) — separate profile for TVM-compatible bytecode.
+# Local trontools/quickstart does NOT support PUSH0/MCOPY/TSTORE.
+# TRON mainnet supports Cancun opcodes since GreatVoyage v4.8.0 (June 2025).
+# We target paris for local dev; switch to cancun for mainnet/Nile.
+#
+# Build: tron/build_tron.sh (patches OZ Bytes.sol mcopy → mload/mstore loops)
+# Deploy: node tron/deploy_tron.js
+# Output goes to: out-tron/ (does NOT affect the default EVM build)
+[profile.tron]
+src = "src"
+out = "out-tron"
+libs = ["lib"]
+solc_version = "0.8.26"
+evm_version = "paris"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+bytecode_hash = "none"
+cbor_metadata = false
+# test/script paths: use build_tron.sh --test to run tests (patches Bytes.sol first)
+# Set to /dev/null for build-only; build_tron.sh overrides via --test flag
+test = "/dev/null"
+script = "/dev/null"
+deny_warnings = false
+remappings = [
+    "crypto-deposit-contracts/=src/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+]
+
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

@@ -1,0 +1,23 @@
+[chain]
+name = "polygon"
+chain_id = 137
+
+[tokens.USDC]
+address = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
+decimals = 6
+
+[tokens.USDT]
+address = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
+decimals = 6
+
+[params]
+travel_rule_threshold = 1000000000000  # $1M (6 decimals)
+deposit_cap = 50000000000              # $50k per deposit (6 decimals)
+reserve_ratio_bps = 800                # 8% (Basel III)
+default_apy_bps = 450                  # 4.5%
+facility_equity = 10000000000000       # $10M (6 decimals)
+travel_rule_ttl = 86400                # 24 hours
+
+[explorer]
+api_env = "POLYGONSCAN_API_KEY"
+url = "https://api.polygonscan.com/api"

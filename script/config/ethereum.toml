@@ -1,0 +1,23 @@
+[chain]
+name = "ethereum"
+chain_id = 1
+
+[tokens.USDC]
+address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+decimals = 6
+
+[tokens.USDT]
+address = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+decimals = 6
+
+[params]
+travel_rule_threshold = 1000000000000  # $1M (6 decimals)
+deposit_cap = 50000000000              # $50k per deposit (6 decimals)
+reserve_ratio_bps = 800                # 8% (Basel III)
+default_apy_bps = 450                  # 4.5%
+facility_equity = 10000000000000       # $10M (6 decimals)
+travel_rule_ttl = 86400                # 24 hours
+
+[explorer]
+api_env = "ETHERSCAN_API_KEY"
+url = "https://api.etherscan.io/api"

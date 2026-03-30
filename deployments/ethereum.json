@@ -1,0 +1,20 @@
+{
+  "network": "ethereum",
+  "chainId": 1,
+  "usdc": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "usdt": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+  "compliance": "0x038D7a1a413f3381d904911012AC4FcC22035e7c",
+  "complianceImpl": "0x3b59Bc06Cdd8F962D3e1df69f5F953648fd5CFB9",
+  "travelRule": "0x12008577b93AEf88eB02152f053F3760c4B872ED",
+  "travelRuleImpl": "0x29641Cd07c0e76217E73538Ac3f53159239Bc018",
+  "treasury": "0xda930739d391Da7064FF95651b42db264d5B5413",
+  "treasuryImpl": "0xd58b4a6e25a6d370FEEA573ec06aEb5ba2b11798",
+  "discountBill": "0x4049F922977347fD217B266618a9F17bc97c181B",
+  "discountBillImpl": "0x61853C934c525447Ad44B1d351fddF922B7dA136",
+  "billTokenFactory": "0xE4A48B05Bb9656271301Ea31af8D98436c5b40Ad",
+  "treasuryYieldManager": "0x657eE0365Ca020414dC88B7b379060a18dB4FeEb",
+  "billMathLib": "0xCe1A9733dD323028a6Fa44c89c2a7EDD12b62Da4",
+  "admin": "0xb109cb03A35827a1ef3570893d8972C523b6F2ce",
+  "deployedAt": "2026-03-06T02:35:23Z",
+  "configuredAt": "2026-03-06T02:57:23Z"
+}

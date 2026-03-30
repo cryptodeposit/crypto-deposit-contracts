@@ -1,0 +1,41 @@
+# Compiler files
+cache/
+out/
+out-tron/
+
+# Ignores development broadcast logs
+!/broadcast
+/broadcast/*/31337/
+/broadcast/**/dry-run/
+
+# Docs
+docs/
+
+# Env files
+.env
+.env.*
+.env.local
+
+# JS/TS tooling
+node_modules/
+*.log*
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Build outputs and caches
+dist/
+build/
+artifacts/
+coverage/
+.turbo/
+tmp/
+logs/
+apps/rate-server/build/
+apps/rate-server/build/_deps/
+
+# Slither
+.slither-venv/
+slither-report.json

@@ -1,0 +1,23 @@
+[chain]
+name = "base"
+chain_id = 8453
+
+[tokens.USDC]
+address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+decimals = 6
+
+[tokens.USDT]
+address = "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2"
+decimals = 6
+
+[params]
+travel_rule_threshold = 1000000000000  # $1M (6 decimals)
+deposit_cap = 50000000000              # $50k per deposit (6 decimals)
+reserve_ratio_bps = 800                # 8% (Basel III)
+default_apy_bps = 450                  # 4.5%
+facility_equity = 10000000000000       # $10M (6 decimals)
+travel_rule_ttl = 86400                # 24 hours
+
+[explorer]
+api_env = "BASESCAN_API_KEY"
+url = "https://api.basescan.org/api"

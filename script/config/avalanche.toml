@@ -1,0 +1,23 @@
+[chain]
+name = "avalanche"
+chain_id = 43114
+
+[tokens.USDC]
+address = "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"
+decimals = 6
+
+[tokens.USDT]
+address = "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7"
+decimals = 6
+
+[params]
+travel_rule_threshold = 1000000000000  # $1M (6 decimals)
+deposit_cap = 50000000000              # $50k per deposit (6 decimals)
+reserve_ratio_bps = 800                # 8% (Basel III)
+default_apy_bps = 450                  # 4.5%
+facility_equity = 10000000000000       # $10M (6 decimals)
+travel_rule_ttl = 86400                # 24 hours
+
+[explorer]
+api_env = "SNOWTRACE_API_KEY"
+url = "https://api.routescan.io/v2/network/mainnet/evm/43114/etherscan/api"
