@@ -51,7 +51,41 @@ See [`deployments/`](deployments/) for contract addresses on each chain.
 
 ## Security
 
-This code has been deployed to production. If you discover a vulnerability, please report it responsibly to security@cryptodeposit.org.
+**Audit status.** A formal third-party security audit is planned and has
+**not yet been completed**. Deployments exist on testnet and mainnet but
+should be treated as pre-audit code. Production value should not be
+committed without an independent audit.
+
+In the interim we publish:
+
+- [`security/SECURITY_REVIEW.md`](security/SECURITY_REVIEW.md) — a detailed
+  AI-assisted self-review covering architecture, trust model, access
+  control, upgrade safety, reentrancy, integer math, oracle risk, and
+  economic risks. Explicitly **not** a substitute for a professional audit.
+- [`security/SLITHER.md`](security/SLITHER.md) — triaged Slither v0.11.3
+  output. 43 findings reviewed; 0 represent real vulnerabilities in our
+  code (all High/Medium findings are OpenZeppelin library false
+  positives or upgradeable-storage pattern mismatches, enumerated in the
+  document).
+- [`security/slither.json`](security/slither.json) — raw Slither output
+  for reproducibility.
+
+### Reproducing the Slither run locally
+
+```bash
+conda activate slither-env
+cd /path/to/crypto-deposit-contracts
+forge install
+slither . --compile-force-framework forge --exclude-informational --exclude-low
+```
+
+Pinned tool version: `slither-analyzer==0.11.3`. Any Slither release can be
+installed via `pip install slither-analyzer==0.11.3` inside the conda env.
+Re-running with a different Slither version may surface additional
+findings; please re-triage against `security/SLITHER.md` before reporting.
+
+**Disclosure.** If you discover a vulnerability, please report it
+responsibly to security@cryptodeposit.org.
 
 ## License
 
