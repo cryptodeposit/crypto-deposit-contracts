@@ -21,8 +21,9 @@ interface ITreasury {
         uint256 collateralClaims;       // Collateral held (no yield owed)
         uint256 lendingPool;            // Undeployed lending pool capital
         uint256 deployed;               // Capital currently in yield strategies
-        uint256 protocolRevenue;        // Accumulated protocol earnings
+        uint256 protocolRevenue;        // Accumulated protocol earnings (realized strategy yield)
         uint256 reserveRatioBps;        // Min on-chain reserve (e.g., 2000 = 20%)
+        uint256 ownedCapital;           // Principal from expired deposits (treasury owns outright)
     }
 
     /// @notice Time-bucketed liability/asset profile for ALM
@@ -140,10 +141,15 @@ interface ITreasury {
     /**
      * @notice Withdraw tokens for a deposit redemption
      * @param token ERC20 token to withdraw
-     * @param amount Amount to pay out
+     * @param amount Amount to pay out (may include interest/commission)
+     * @param principalPortion How much of `amount` is principal (reduces depositClaims)
+     * @param maturityTimestamp Bill maturity (for maturity bucket cleanup; 0 to skip)
      * @param recipient Depositor's wallet
      */
+    /// @notice Backward-compatible: old DiscountBill uses this 3-param version
     function withdrawForRedemption(address token, uint256 amount, address recipient) external;
+
+    function withdrawForRedemption(address token, uint256 amount, uint256 principalPortion, uint256 maturityTimestamp, address recipient) external;
 
     /**
      * @notice Adjust deposit accounting when bills are merged
@@ -164,6 +170,64 @@ interface ITreasury {
         uint256[] calldata oldBillLiabilities,
         uint256[] calldata oldBillMaturities
     ) external;
+
+    /// @notice Emitted when an expired deposit is written off (escheatment)
+    event DepositExpiredWriteOff(
+        address indexed token,
+        uint256 principal,
+        uint256 liability,
+        uint256 maturityTimestamp
+    );
+
+    /**
+     * @notice Write off an expired deposit without transferring tokens (escheatment)
+     * @dev Used by DiscountBill.burnExpired() when funds stay in treasury.
+     *      - Reduces depositClaims by principal (not liability)
+     *      - Reduces depositLiabilities by liability
+     *      - Reduces maturityLiabilities bucket
+     *      - Does NOT book into protocolRevenue (these are not realized earnings)
+     *      - Tracks the principal in ownedCapital (treasury now owns these funds outright)
+     * @param token ERC20 token
+     * @param principal The bill's principal amount
+     * @param liability The bill's full liability (principal + promised interest)
+     * @param maturityTimestamp The bill's maturity timestamp (for bucket cleanup)
+     */
+    function writeOffExpiredDeposit(
+        address token,
+        uint256 principal,
+        uint256 liability,
+        uint256 maturityTimestamp
+    ) external;
+
+    /**
+     * @notice Settle early redemption accounting — break fee as revenue, unaccrued interest written off
+     * @dev Called once per early redemption to handle the non-payout portion:
+     *      - breakFee: legitimate revenue (penalty), booked to protocolRevenue
+     *      - unaccruedInterest: promised yield never earned, simply removed from liabilities
+     *      - maturity bucket reduced by full amount (breakFee + unaccruedInterest)
+     * @param token ERC20 token
+     * @param breakFee Actual break fee (revenue)
+     * @param unaccruedInterest Future interest that was never earned (write-off, not revenue)
+     * @param principalInForfeit Principal portion within breakFee + unaccruedInterest (reduces depositClaims)
+     * @param maturityTimestamp Bill maturity (for bucket cleanup)
+     */
+    function settleEarlyRedemptionForfeit(
+        address token,
+        uint256 breakFee,
+        uint256 unaccruedInterest,
+        uint256 principalInForfeit,
+        uint256 maturityTimestamp
+    ) external;
+
+    /**
+     * @notice Transfer tokens from treasury without changing deposit accounting
+     * @dev Used after writeOffExpiredDeposit() to return principal to an external address.
+     *      Accounting is already settled — this is a pure cash movement.
+     * @param token ERC20 token
+     * @param amount Amount to transfer (should be <= principal of the expired bill)
+     * @param recipient Address to receive the tokens
+     */
+    function disburseExpiredFunds(address token, uint256 amount, address recipient) external;
 
     // ============================================================================
     // Collateral Manager Functions (called by CollateralVault)

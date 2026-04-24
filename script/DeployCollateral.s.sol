@@ -155,9 +155,15 @@ contract DeployCollateral is Script {
             engine.addSupportedToken(e.mmaticToken, 1000);
         }
 
-        // Fund BorrowingEngine with borrow liquidity
-        IERC20(e.stableToken).approve(p.borrowingEngine, INITIAL_BORROW_LIQUIDITY);
-        engine.addLiquidity(e.stableToken, INITIAL_BORROW_LIQUIDITY);
+        // Fund BorrowingEngine with borrow liquidity (skip if SKIP_FUNDING=true)
+        bool skipFunding = vm.envOr("SKIP_FUNDING", false);
+        if (!skipFunding) {
+            uint256 fundAmount = vm.envOr("FUND_AMOUNT", INITIAL_BORROW_LIQUIDITY);
+            IERC20(e.stableToken).approve(p.borrowingEngine, fundAmount);
+            engine.addLiquidity(e.stableToken, fundAmount);
+        } else {
+            console.log("Skipping liquidity funding (SKIP_FUNDING=true)");
+        }
     }
 
     function _setStablecoinHaircut(HaircutRegistryUpgradeable registry, address token) internal {

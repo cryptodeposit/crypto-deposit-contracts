@@ -856,6 +856,873 @@ contract DiscountBillERC5095UpgradeableTest is Test {
         bill.unpause();
         assertFalse(bill.paused());
     }
+
+    // ========== NFT METADATA TESTS ==========
+
+    function testSetBaseURIAndTokenURI() public {
+        (uint256 billId,,) = _issueDefault(address(token));
+
+        // Set base URI
+        vm.prank(admin);
+        bill.setBaseURI("https://api.cryptodeposit.org/nft/1/");
+
+        string memory uri = bill.tokenURI(billId);
+        assertEq(uri, string(abi.encodePacked("https://api.cryptodeposit.org/nft/1/", vm.toString(billId))));
+    }
+
+    function testSetBaseURIRevertsForNonAdmin() public {
+        vm.prank(owner);
+        vm.expectRevert();
+        bill.setBaseURI("https://example.com/");
+    }
+
+    function testContractURI() public {
+        // Initially empty
+        assertEq(bill.contractURI(), "");
+
+        vm.prank(admin);
+        bill.setContractURI("https://api.cryptodeposit.org/nft/collection.json");
+        assertEq(bill.contractURI(), "https://api.cryptodeposit.org/nft/collection.json");
+    }
+
+    function testSetContractURIRevertsForNonAdmin() public {
+        vm.prank(owner);
+        vm.expectRevert();
+        bill.setContractURI("https://example.com/collection.json");
+    }
+
+    // ========== ESCHEATMENT TESTS ==========
+
+    function testSetDefaultClaimWindow() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(365 days); // 1 year
+
+        assertEq(bill.defaultClaimWindow(), 365 days);
+    }
+
+    function testSetDefaultClaimWindowEmitsEvent() public {
+        vm.prank(admin);
+        vm.expectEmit(false, false, false, true);
+        emit DiscountBillERC5095Upgradeable.DefaultClaimWindowUpdated(0, 365 days);
+        bill.setDefaultClaimWindow(365 days);
+    }
+
+    function testSetDefaultClaimWindowRevertsUnder30Days() public {
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.InvalidClaimWindow.selector);
+        bill.setDefaultClaimWindow(29 days);
+    }
+
+    function testSetDefaultClaimWindowAllowsZero() public {
+        // First set a window
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(365 days);
+
+        // Zero disables escheatment
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(0);
+        assertEq(bill.defaultClaimWindow(), 0);
+    }
+
+    function testSetDefaultClaimWindowRevertsForNonAdmin() public {
+        vm.prank(owner);
+        vm.expectRevert();
+        bill.setDefaultClaimWindow(365 days);
+    }
+
+    function testClaimDeadlineSetOnIssueWhenDefaultConfigured() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(365 days);
+
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        uint256 deadline = bill.getClaimDeadline(billId);
+        assertEq(deadline, info.maturity + 365 days);
+    }
+
+    function testClaimDeadlineZeroWhenNoDefault() public {
+        // No default claim window set
+        (uint256 billId,,) = _issueDefault(address(token));
+        assertEq(bill.getClaimDeadline(billId), 0);
+    }
+
+    function testSetBillClaimDeadlineOverride() public {
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        uint256 customDeadline = info.maturity + 60 days;
+        vm.prank(admin);
+        bill.setBillClaimDeadline(billId, customDeadline);
+
+        assertEq(bill.getClaimDeadline(billId), customDeadline);
+    }
+
+    function testSetBillClaimDeadlineRevertsIfTooSoon() public {
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        // Less than maturity + 30 days
+        uint256 tooSoon = info.maturity + 20 days;
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.InvalidClaimWindow.selector);
+        bill.setBillClaimDeadline(billId, tooSoon);
+    }
+
+    function testSetBillClaimDeadlineResetToDefault() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(365 days);
+
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        // Override
+        vm.prank(admin);
+        bill.setBillClaimDeadline(billId, info.maturity + 60 days);
+        assertEq(bill.getClaimDeadline(billId), info.maturity + 60 days);
+
+        // Reset to default (0)
+        vm.prank(admin);
+        bill.setBillClaimDeadline(billId, 0);
+        assertEq(bill.getClaimDeadline(billId), info.maturity + 365 days);
+    }
+
+    function testIsExpiredReturnsFalseBeforeDeadline() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        (uint256 billId,,) = _issueDefault(address(token));
+
+        // Before maturity
+        assertFalse(bill.isExpired(billId));
+
+        // After maturity but before deadline
+        vm.warp(block.timestamp + 2 days); // matured (1-day bill)
+        assertFalse(bill.isExpired(billId));
+
+        // At maturity + 29 days (still within window)
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+        vm.warp(info.maturity + 29 days);
+        assertFalse(bill.isExpired(billId));
+    }
+
+    function testIsExpiredReturnsTrueAfterDeadline() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        // Past deadline
+        vm.warp(info.maturity + 31 days);
+        assertTrue(bill.isExpired(billId));
+    }
+
+    function testIsExpiredReturnsFalseWithNoEscheatment() public {
+        // No default claim window
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        vm.warp(info.maturity + 10000 days);
+        assertFalse(bill.isExpired(billId));
+    }
+
+    function testBurnExpired() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        (uint256 billId, uint256 redemptionValue,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        // Warp past claim deadline
+        vm.warp(info.maturity + 31 days);
+        assertTrue(bill.isExpired(billId));
+
+        uint256 issuerBefore = token.balanceOf(issuer);
+
+        vm.prank(admin);
+        bill.burnExpired(billId);
+
+        // Bill should be burned
+        vm.expectRevert();
+        bill.ownerOf(billId);
+
+        // Bill data zeroed
+        assertEq(bill.redeemableValue(billId), 0);
+        assertTrue(bill.billInvalidated(billId));
+
+        // Funds stay with issuer (no treasury in this test)
+        assertEq(token.balanceOf(issuer), issuerBefore);
+    }
+
+    function testBurnExpiredRevertsIfNotExpired() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        (uint256 billId,,) = _issueDefault(address(token));
+
+        // Only matured, not expired
+        vm.warp(block.timestamp + 2 days);
+        assertFalse(bill.isExpired(billId));
+
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.NotExpired.selector);
+        bill.burnExpired(billId);
+    }
+
+    function testBurnExpiredRevertsIfAlreadyRedeemed() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        (uint256 billId,,) = _issueDefault(address(token));
+
+        // Redeem first
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(owner);
+        bill.redeem(billId);
+
+        // Now it's redeemed — isExpired returns false (redemptionValue == 0)
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+        vm.warp(info.maturity + 31 days);
+        assertFalse(bill.isExpired(billId));
+
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.NotExpired.selector);
+        bill.burnExpired(billId);
+    }
+
+    function testBurnExpiredRevertsForNonOperator() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+        vm.warp(info.maturity + 31 days);
+
+        vm.prank(owner);
+        vm.expectRevert();
+        bill.burnExpired(billId);
+    }
+
+    function testBatchBurnExpired() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        // Issue 3 bills
+        (uint256 id1,,) = _issueDefault(address(token));
+        (uint256 id2,,) = _issueDefault(address(token));
+        (uint256 id3,,) = _issueDefault(address(token));
+
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(id1);
+        vm.warp(info.maturity + 31 days);
+
+        uint256[] memory ids = new uint256[](3);
+        ids[0] = id1;
+        ids[1] = id2;
+        ids[2] = id3;
+
+        vm.prank(admin);
+        bill.batchBurnExpired(ids);
+
+        // All burned
+        for (uint256 i = 0; i < ids.length; i++) {
+            vm.expectRevert();
+            bill.ownerOf(ids[i]);
+            assertEq(bill.redeemableValue(ids[i]), 0);
+            assertTrue(bill.billInvalidated(ids[i]));
+        }
+    }
+
+    function testBatchBurnExpiredRevertsIfOneNotExpired() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        (uint256 id1,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info1 = bill.getBillInfo(id1);
+
+        // Issue second bill later (different maturity)
+        vm.warp(block.timestamp + 15 days);
+        (uint256 id2,,) = _issueDefault(address(token));
+
+        // Warp so id1 is expired but id2 is not
+        vm.warp(info1.maturity + 31 days);
+        assertTrue(bill.isExpired(id1));
+        assertFalse(bill.isExpired(id2));
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = id1;
+        ids[1] = id2;
+
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.NotExpired.selector);
+        bill.batchBurnExpired(ids);
+    }
+
+    function testBurnExpiredEmitsEvent() public {
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        (uint256 billId, uint256 redemptionValue,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        vm.warp(info.maturity + 31 days);
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit DiscountBillERC5095Upgradeable.BillExpiredAndBurned(billId, owner, redemptionValue, 0, issuer);
+        bill.burnExpired(billId);
+    }
+
+    // ========== TREASURY-PATH ESCHEATMENT TESTS ==========
+
+    // Helper: deploy treasury and wire to bill contract
+    function _setupTreasury() internal returns (TreasuryUpgradeable) {
+        TreasuryUpgradeable treasuryImpl = new TreasuryUpgradeable();
+        TreasuryUpgradeable treasuryProxy = TreasuryUpgradeable(
+            address(
+                new ERC1967Proxy(
+                    address(treasuryImpl),
+                    abi.encodeCall(TreasuryUpgradeable.initialize, (admin))
+                )
+            )
+        );
+        bytes32 depositManagerRole = treasuryProxy.DEPOSIT_MANAGER_ROLE();
+        vm.prank(admin);
+        treasuryProxy.grantRole(depositManagerRole, address(bill));
+        vm.prank(admin);
+        bill.setTreasury(address(treasuryProxy));
+        vm.prank(depositor);
+        token.approve(address(bill), type(uint256).max);
+        return treasuryProxy;
+    }
+
+    function testBurnExpiredWithTreasuryClearsLiability() public {
+        TreasuryUpgradeable treasuryProxy = _setupTreasury();
+
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        vm.prank(admin);
+        uint256 billId = bill.issue(
+            owner, depositor, depositWallet, introducingWallet, address(token), PRINCIPAL, 36_500, 1
+        );
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        uint256 liabBefore = treasuryProxy.depositLiabilities(address(token));
+        uint256 claimsBefore = treasuryProxy.depositClaims(address(token));
+        assertTrue(liabBefore > 0);
+
+        vm.warp(info.maturity + 31 days);
+        assertTrue(bill.isExpired(billId));
+
+        vm.prank(admin);
+        bill.burnExpired(billId);
+
+        // depositLiabilities reduced by full liability (principal + interest)
+        assertEq(treasuryProxy.depositLiabilities(address(token)), liabBefore - info.redemptionValue);
+        // depositClaims reduced by principal only
+        assertEq(treasuryProxy.depositClaims(address(token)), claimsBefore - info.principal);
+        // protocolRevenue must NOT increase (expired deposits are not realized yield)
+        assertEq(treasuryProxy.protocolRevenue(address(token)), 0);
+        // ownedCapital tracks the principal (real funded capital)
+        assertEq(treasuryProxy.ownedCapital(address(token)), info.principal);
+        // Tokens still in treasury
+        assertEq(token.balanceOf(address(treasuryProxy)), PRINCIPAL);
+
+        vm.expectRevert();
+        bill.ownerOf(billId);
+    }
+
+    function testBurnExpiredWithTreasuryExternalFundingSource() public {
+        TreasuryUpgradeable treasuryProxy = _setupTreasury();
+
+        // Create series with custom fundingSource
+        address sponsor = makeAddr("sponsor");
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Sponsored Airdrop", address(token), 5 ether, 10_000, 7, 30, 10, sponsor
+        );
+
+        address recipient = makeAddr("recipient");
+        vm.prank(admin);
+        uint256 billId = bill.issueFromSeries(seriesId, recipient, depositor, depositWallet, introducingWallet);
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        uint256 liabBefore = treasuryProxy.depositLiabilities(address(token));
+        uint256 sponsorBefore = token.balanceOf(sponsor);
+
+        vm.warp(info.maturity + 31 days);
+        assertTrue(bill.isExpired(billId));
+
+        vm.prank(admin);
+        bill.burnExpired(billId);
+
+        // Accounting fully cleared
+        assertEq(treasuryProxy.depositLiabilities(address(token)), liabBefore - info.redemptionValue);
+        // Only principal transferred to sponsor (interest was never funded)
+        assertEq(token.balanceOf(sponsor), sponsorBefore + info.principal);
+        // protocolRevenue untouched, ownedCapital = 0 (principal was disbursed)
+        assertEq(treasuryProxy.protocolRevenue(address(token)), 0);
+        assertEq(treasuryProxy.ownedCapital(address(token)), 0);
+
+        vm.expectRevert();
+        bill.ownerOf(billId);
+    }
+
+    function testBurnExpiredNoTreasuryExternalFundingSource() public {
+        // No treasury — test issuer-to-fundingSource transfer
+        address sponsor = makeAddr("sponsor");
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "No-Treasury Airdrop", address(token), 5 ether, 10_000, 7, 30, 10, sponsor
+        );
+
+        address recipient = makeAddr("recipient");
+        vm.prank(admin);
+        uint256 billId = bill.issueFromSeries(seriesId, recipient, depositor, depositWallet, introducingWallet);
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        uint256 issuerBefore = token.balanceOf(issuer);
+        uint256 sponsorBefore = token.balanceOf(sponsor);
+
+        vm.warp(info.maturity + 31 days);
+
+        vm.prank(admin);
+        bill.burnExpired(billId);
+
+        // Issuer transferred principal to sponsor (only principal, not full liability)
+        assertEq(token.balanceOf(sponsor), sponsorBefore + info.principal);
+        assertEq(token.balanceOf(issuer), issuerBefore - info.principal);
+
+        vm.expectRevert();
+        bill.ownerOf(billId);
+    }
+
+    // ========== BILL SERIES TESTS ==========
+
+    function testCreateSeries() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "USDT $5 Airdrop",
+            address(token),
+            5 ether,      // principalPerBill
+            10_000,       // 100% APY
+            7,            // 7 days
+            30,           // 30-day claim window
+            100,          // max 100 bills
+            address(0)    // treasury as funding source
+        );
+
+        assertEq(seriesId, 1);
+        assertEq(bill.seriesCount(), 1);
+
+        DiscountBillERC5095Upgradeable.BillSeries memory s = bill.getSeriesInfo(seriesId);
+        assertEq(s.principalPerBill, 5 ether);
+        assertEq(s.annualRateBps, 10_000);
+        assertEq(s.durationInDays, 7);
+        assertEq(s.claimWindowDays, 30);
+        assertEq(s.maxBills, 100);
+        assertEq(s.issuedCount, 0);
+        assertTrue(s.active);
+    }
+
+    function testCreateSeriesEmitsEvent() public {
+        vm.prank(admin);
+        vm.expectEmit(true, false, false, true);
+        emit DiscountBillERC5095Upgradeable.SeriesCreated(1, "Airdrop", address(token), 5 ether, 100);
+        bill.createSeries("Airdrop", address(token), 5 ether, 10_000, 7, 30, 100, address(0));
+    }
+
+    function testCreateSeriesRevertsForNonAdmin() public {
+        vm.prank(owner);
+        vm.expectRevert();
+        bill.createSeries("Airdrop", address(token), 5 ether, 10_000, 7, 30, 100, address(0));
+    }
+
+    function testCreateSeriesRevertsOnBadParams() public {
+        // Zero token
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.ZeroAddress.selector);
+        bill.createSeries("X", address(0), 5 ether, 10_000, 7, 30, 100, address(0));
+
+        // Zero principal
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.InvalidAmount.selector);
+        bill.createSeries("X", address(token), 0, 10_000, 7, 30, 100, address(0));
+
+        // Invalid rate
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.InvalidRate.selector);
+        bill.createSeries("X", address(token), 5 ether, 0, 7, 30, 100, address(0));
+
+        // Zero duration
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.InvalidDuration.selector);
+        bill.createSeries("X", address(token), 5 ether, 10_000, 0, 30, 100, address(0));
+
+        // Claim window < 30 days
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.InvalidClaimWindow.selector);
+        bill.createSeries("X", address(token), 5 ether, 10_000, 7, 29, 100, address(0));
+    }
+
+    function testIssueFromSeries() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), 5 ether, 10_000, 7, 30, 10, address(0)
+        );
+
+        address recipient = makeAddr("recipient");
+
+        vm.prank(admin);
+        uint256 billId = bill.issueFromSeries(seriesId, recipient, depositor, depositWallet, introducingWallet);
+
+        // Bill exists and is owned by recipient
+        assertEq(bill.ownerOf(billId), recipient);
+
+        // Bill has series parameters
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+        assertEq(info.principal, 5 ether);
+        assertEq(info.token, address(token));
+
+        // Bill tagged to series
+        assertEq(bill.billSeries(billId), seriesId);
+
+        // Series issued count updated
+        DiscountBillERC5095Upgradeable.BillSeries memory s = bill.getSeriesInfo(seriesId);
+        assertEq(s.issuedCount, 1);
+
+        // Claim deadline set from series claimWindowDays
+        uint256 deadline = bill.getClaimDeadline(billId);
+        assertEq(deadline, info.maturity + 30 days);
+    }
+
+    function testIssueFromSeriesEmitsEvent() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), 5 ether, 10_000, 7, 30, 10, address(0)
+        );
+
+        address recipient = makeAddr("recipient");
+
+        vm.prank(admin);
+        // SeriesBillIssued(seriesId, billId, recipient)
+        vm.expectEmit(true, true, true, false);
+        emit DiscountBillERC5095Upgradeable.SeriesBillIssued(seriesId, 1, recipient);
+        bill.issueFromSeries(seriesId, recipient, depositor, depositWallet, introducingWallet);
+    }
+
+    function testIssueFromSeriesExhausted() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Small", address(token), 5 ether, 10_000, 7, 30, 2, address(0)
+        );
+
+        address r1 = makeAddr("r1");
+        address r2 = makeAddr("r2");
+        address r3 = makeAddr("r3");
+
+        vm.prank(admin);
+        bill.issueFromSeries(seriesId, r1, depositor, depositWallet, introducingWallet);
+
+        vm.prank(admin);
+        bill.issueFromSeries(seriesId, r2, depositor, depositWallet, introducingWallet);
+
+        // Third should revert — max 2 bills
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.SeriesExhausted.selector);
+        bill.issueFromSeries(seriesId, r3, depositor, depositWallet, introducingWallet);
+    }
+
+    function testIssueFromSeriesUnlimited() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Unlimited", address(token), 5 ether, 10_000, 7, 30, 0, address(0) // maxBills = 0 = unlimited
+        );
+
+        // Issue several — should all succeed
+        for (uint256 i = 0; i < 5; i++) {
+            address r = makeAddr(string(abi.encodePacked("r", vm.toString(i))));
+            vm.prank(admin);
+            bill.issueFromSeries(seriesId, r, depositor, depositWallet, introducingWallet);
+        }
+
+        DiscountBillERC5095Upgradeable.BillSeries memory s = bill.getSeriesInfo(seriesId);
+        assertEq(s.issuedCount, 5);
+    }
+
+    function testDeactivateSeries() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), 5 ether, 10_000, 7, 30, 100, address(0)
+        );
+
+        vm.prank(admin);
+        bill.deactivateSeries(seriesId);
+
+        DiscountBillERC5095Upgradeable.BillSeries memory s = bill.getSeriesInfo(seriesId);
+        assertFalse(s.active);
+
+        // Can't issue from deactivated series
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.SeriesNotFound.selector);
+        bill.issueFromSeries(seriesId, owner, depositor, depositWallet, introducingWallet);
+    }
+
+    function testDeactivateSeriesEmitsEvent() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), 5 ether, 10_000, 7, 30, 100, address(0)
+        );
+
+        vm.prank(admin);
+        vm.expectEmit(true, false, false, false);
+        emit DiscountBillERC5095Upgradeable.SeriesDeactivated(seriesId);
+        bill.deactivateSeries(seriesId);
+    }
+
+    function testDeactivateSeriesRevertsForNonAdmin() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), 5 ether, 10_000, 7, 30, 100, address(0)
+        );
+
+        vm.prank(owner);
+        vm.expectRevert();
+        bill.deactivateSeries(seriesId);
+    }
+
+    function testDeactivateSeriesRevertsInvalidId() public {
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.SeriesNotFound.selector);
+        bill.deactivateSeries(0);
+
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.SeriesNotFound.selector);
+        bill.deactivateSeries(999);
+    }
+
+    function testIssueFromSeriesRevertsForNonOperator() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), 5 ether, 10_000, 7, 30, 100, address(0)
+        );
+
+        vm.prank(owner);
+        vm.expectRevert();
+        bill.issueFromSeries(seriesId, owner, depositor, depositWallet, introducingWallet);
+    }
+
+    function testIssueFromSeriesRevertsWhenPaused() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), 5 ether, 10_000, 7, 30, 100, address(0)
+        );
+
+        vm.prank(admin);
+        bill.pause();
+
+        vm.prank(admin);
+        vm.expectRevert();
+        bill.issueFromSeries(seriesId, owner, depositor, depositWallet, introducingWallet);
+    }
+
+    function testSeriesBillEscheatment() public {
+        // Create series with 30-day claim window
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), 5 ether, 10_000, 7, 30, 10, address(0)
+        );
+
+        address recipient = makeAddr("recipient");
+        vm.prank(admin);
+        uint256 billId = bill.issueFromSeries(seriesId, recipient, depositor, depositWallet, introducingWallet);
+
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        // Not expired before deadline
+        vm.warp(info.maturity + 29 days);
+        assertFalse(bill.isExpired(billId));
+
+        // Expired after deadline
+        vm.warp(info.maturity + 31 days);
+        assertTrue(bill.isExpired(billId));
+
+        // Can burn
+        vm.prank(admin);
+        bill.burnExpired(billId);
+
+        vm.expectRevert();
+        bill.ownerOf(billId);
+    }
+
+    function testMultipleSeries() public {
+        vm.prank(admin);
+        uint256 s1 = bill.createSeries("S1", address(token), 5 ether, 10_000, 7, 30, 100, address(0));
+        vm.prank(admin);
+        uint256 s2 = bill.createSeries("S2", address(token), 10 ether, 5_000, 30, 60, 50, address(0));
+
+        assertEq(s1, 1);
+        assertEq(s2, 2);
+        assertEq(bill.seriesCount(), 2);
+
+        // Issue from each
+        vm.prank(admin);
+        uint256 b1 = bill.issueFromSeries(s1, owner, depositor, depositWallet, introducingWallet);
+        vm.prank(admin);
+        uint256 b2 = bill.issueFromSeries(s2, owner, depositor, depositWallet, introducingWallet);
+
+        assertEq(bill.billSeries(b1), s1);
+        assertEq(bill.billSeries(b2), s2);
+
+        IDiscountBill.BillInfo memory info1 = bill.getBillInfo(b1);
+        IDiscountBill.BillInfo memory info2 = bill.getBillInfo(b2);
+        assertEq(info1.principal, 5 ether);
+        assertEq(info2.principal, 10 ether);
+    }
+
+    function testGetSeriesInfoRevertsInvalidId() public {
+        vm.expectRevert(DiscountBillERC5095Upgradeable.SeriesNotFound.selector);
+        bill.getSeriesInfo(0);
+
+        vm.expectRevert(DiscountBillERC5095Upgradeable.SeriesNotFound.selector);
+        bill.getSeriesInfo(1);
+    }
+
+    // ========== REGRESSION: SERIES MERGE PROTECTION ==========
+
+    function testSeriesBillCannotMergeWithStandard() public {
+        // Issue a series bill
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), PRINCIPAL, 36_500, 90, 30, 10, address(0)
+        );
+        vm.prank(admin);
+        uint256 seriesBillId = bill.issueFromSeries(seriesId, owner, depositor, depositWallet, introducingWallet);
+
+        // Issue a standard bill (same params for compatibility)
+        vm.prank(admin);
+        uint256 stdBillId = bill.issue(
+            owner, depositor, depositWallet, introducingWallet, address(token), PRINCIPAL, 36_500, 90
+        );
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = seriesBillId;
+        ids[1] = stdBillId;
+
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.SeriesBillCannotMerge.selector);
+        bill.merge(ids, 36_500);
+    }
+
+    function testStandardBillCannotMergeWithSeries() public {
+        vm.prank(admin);
+        uint256 seriesId = bill.createSeries(
+            "Airdrop", address(token), PRINCIPAL, 36_500, 90, 30, 10, address(0)
+        );
+        vm.prank(admin);
+        uint256 seriesBillId = bill.issueFromSeries(seriesId, owner, depositor, depositWallet, introducingWallet);
+
+        vm.prank(admin);
+        uint256 stdBillId = bill.issue(
+            owner, depositor, depositWallet, introducingWallet, address(token), PRINCIPAL, 36_500, 90
+        );
+
+        // Standard first, series second — series check still catches it
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = stdBillId;
+        ids[1] = seriesBillId;
+
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.SeriesBillCannotMerge.selector);
+        bill.merge(ids, 36_500);
+    }
+
+    // ========== REGRESSION: RETROACTIVE CLAIM WINDOW ==========
+
+    function testLegacyBillNotRetroactivelyBurnable() public {
+        // Issue a bill BEFORE any claim window is configured
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        // Bill matures
+        vm.warp(info.maturity + 1);
+        assertTrue(bill.isMature(billId));
+
+        // Now admin sets default claim window (simulates post-upgrade config)
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        // Legacy bill should NOT be subject to the new window
+        assertEq(bill.getClaimDeadline(billId), 0, "Legacy bill should have no claim deadline");
+        assertFalse(bill.isExpired(billId), "Legacy bill must not be expired");
+
+        // Even after 100 days past maturity — still not burnable
+        vm.warp(info.maturity + 100 days);
+        assertFalse(bill.isExpired(billId));
+
+        vm.prank(admin);
+        vm.expectRevert(DiscountBillERC5095Upgradeable.NotExpired.selector);
+        bill.burnExpired(billId);
+    }
+
+    function testNewBillSubjectToClaimWindow() public {
+        // Set claim window first
+        vm.prank(admin);
+        bill.setDefaultClaimWindow(30 days);
+
+        // Issue a bill AFTER window is configured
+        (uint256 billId,,) = _issueDefault(address(token));
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        // This bill SHOULD have a claim deadline
+        assertEq(bill.getClaimDeadline(billId), info.maturity + 30 days);
+
+        // After deadline, it IS burnable
+        vm.warp(info.maturity + 31 days);
+        assertTrue(bill.isExpired(billId));
+    }
+
+    // ========== REGRESSION: EARLY REDEMPTION REVENUE ==========
+
+    function testEarlyRedemptionDoesNotOverstateRevenue() public {
+        TreasuryUpgradeable treasuryProxy = _setupTreasury();
+
+        // Issue a 90-day bill at 10% APY
+        vm.prank(admin);
+        uint256 billId = bill.issue(
+            owner, depositor, depositWallet, introducingWallet, address(token), PRINCIPAL, 10_000, 90
+        );
+        IDiscountBill.BillInfo memory info = bill.getBillInfo(billId);
+
+        // Move to day 1 (very early — most interest unaccrued)
+        vm.warp(block.timestamp + 1 days);
+
+        // Request early redemption
+        vm.prank(owner);
+        uint256 requestId = bill.requestEarlyRedemption(billId, false, 0);
+
+        DiscountBillERC5095Upgradeable.EarlyRedemptionRequest memory req =
+            bill.getEarlyRedemptionRequest(requestId);
+
+        // Approve early redemption
+        vm.prank(admin);
+        bill.approveEarlyRedemption(requestId);
+
+        // protocolRevenue must be zero — break fee goes to ownedCapital, not revenue
+        assertEq(treasuryProxy.protocolRevenue(address(token)), 0,
+            "protocolRevenue must not increase from early redemption");
+
+        // ownedCapital should hold the retained principal
+        assertTrue(treasuryProxy.ownedCapital(address(token)) > 0 || req.breakFee == 0,
+            "retained principal should be in ownedCapital");
+
+        // Treasury token balance must be >= ownedCapital (cash actually there)
+        assertTrue(
+            token.balanceOf(address(treasuryProxy)) >= treasuryProxy.ownedCapital(address(token)),
+            "ownedCapital cannot exceed actual treasury balance"
+        );
+    }
 }
 
 // ========== BATCH HELPER TESTS ==========

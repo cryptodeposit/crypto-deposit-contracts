@@ -247,10 +247,11 @@ contract TreasuryUpgradeableTest is Test {
         // Redeem
         uint256 balBefore = mUSD.balanceOf(depositor);
         vm.prank(depositManager);
-        treasury.withdrawForRedemption(address(mUSD), liability, depositor);
+        treasury.withdrawForRedemption(address(mUSD), liability, principal, block.timestamp, depositor);
 
         assertEq(mUSD.balanceOf(depositor) - balBefore, liability);
         assertEq(treasury.depositLiabilities(address(mUSD)), 0);
+        assertEq(treasury.depositClaims(address(mUSD)), 0);
     }
 
     function test_recordDeposit_revertsUnauthorized() public {
@@ -874,7 +875,7 @@ contract TreasuryUpgradeableTest is Test {
         // Depositors must always be able to exit — even when paused
         vm.warp(block.timestamp + 91 days);
         vm.prank(depositManager);
-        treasury.withdrawForRedemption(address(mUSD), liability, depositor);
+        treasury.withdrawForRedemption(address(mUSD), liability, principal, block.timestamp, depositor);
 
         assertEq(mUSD.balanceOf(depositor), MILLION * 10 + liability);
     }

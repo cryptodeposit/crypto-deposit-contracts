@@ -14,5 +14,11 @@
   "billTokenFactory": "0x4049F922977347fD217B266618a9F17bc97c181B",
   "treasuryYieldManager": "0x6Ca39A91817f0FFa8770530e837090Fc06e5686A",
   "admin": "0xb109cb03A35827a1ef3570893d8972C523b6F2ce",
-  "deployedAt": "2026-03-06T02:28:25Z"
+  "deployedAt": "2026-03-06T02:28:25Z",
+  "haircutRegistry": "0x51ED557C6297DA0a811FB0d099b2bAE868a2116e",
+  "priceOracle": "0x4bdA9cb635D18D1a49aC152fA59E37cE5CCDdbe8",
+  "collateralVault": "0x7492C1cB4f931143b68F6A7d573e09a195C47cC5",
+  "borrowingEngine": "0xF8F28cFA456E128d48C8D04192226fC05d54C622",
+  "liquidationManager": "0xD9b62f95b73bf685B5480115EDE70238942142EB",
+  "collateralDeployedAt": "2026-04-23T00:48:57Z"
 }

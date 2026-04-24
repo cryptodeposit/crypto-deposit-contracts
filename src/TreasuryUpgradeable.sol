@@ -91,6 +91,11 @@ contract TreasuryUpgradeable is
     address[] private _trackedTokens;
     mapping(address => bool) private _isTrackedToken;
 
+    /// @notice Capital owned outright by treasury from expired deposits (escheatment)
+    /// @dev Separate from protocolRevenue to avoid double-counting with strategy yield.
+    ///      Only the principal portion is tracked here (interest was never funded).
+    mapping(address => uint256) public ownedCapital;
+
     // ============================================================================
     // Constructor / Initializer
     // ============================================================================
@@ -153,21 +158,23 @@ contract TreasuryUpgradeable is
         emit DepositRecorded(token, principal, liability, maturityTimestamp);
     }
 
+    /// @notice Backward-compatible overload for pre-upgrade DiscountBill contracts.
+    /// @dev The old DiscountBill calls withdrawForRedemption(token, amount, recipient) with 3 params.
+    ///      This shim preserves that selector (0x7ab33fd5) so redemptions continue working
+    ///      during the window between Treasury upgrade and DiscountBill upgrade.
+    ///      Falls back to reducing depositClaims by full amount (old behavior).
     function withdrawForRedemption(
         address token,
         uint256 amount,
         address recipient
-    ) external override onlyRole(DEPOSIT_MANAGER_ROLE) nonReentrant {
+    ) external onlyRole(DEPOSIT_MANAGER_ROLE) nonReentrant {
         require(token != address(0), "token=0");
         require(amount > 0, "amount=0");
         require(recipient != address(0), "recipient=0");
 
-        // Reduce liabilities — principal + yield being paid out
-        // The caller determines the split; we just track total liabilities
         require(depositLiabilities[token] >= amount, "exceeds deposit liabilities");
         depositLiabilities[token] -= amount;
 
-        // Reduce claims by at most the remaining claims
         if (depositClaims[token] >= amount) {
             depositClaims[token] -= amount;
         } else {
@@ -178,6 +185,138 @@ contract TreasuryUpgradeable is
         IERC20(token).safeTransfer(recipient, amount);
 
         emit DepositRedemptionPaid(token, amount, recipient);
+    }
+
+    function withdrawForRedemption(
+        address token,
+        uint256 amount,
+        uint256 principalPortion,
+        uint256 maturityTimestamp,
+        address recipient
+    ) external override onlyRole(DEPOSIT_MANAGER_ROLE) nonReentrant {
+        require(token != address(0), "token=0");
+        require(amount > 0, "amount=0");
+        require(recipient != address(0), "recipient=0");
+        require(principalPortion <= amount, "principal>amount");
+
+        // Reduce liabilities by full payout amount (principal + interest)
+        require(depositLiabilities[token] >= amount, "exceeds deposit liabilities");
+        depositLiabilities[token] -= amount;
+
+        // Reduce claims by the principal portion only (not interest/commission)
+        if (depositClaims[token] >= principalPortion) {
+            depositClaims[token] -= principalPortion;
+        } else {
+            depositClaims[token] = 0;
+        }
+
+        // Reduce maturity bucket
+        if (maturityTimestamp > 0) {
+            uint256 bucket = _toBucket(maturityTimestamp);
+            if (maturityLiabilities[token][bucket] >= amount) {
+                maturityLiabilities[token][bucket] -= amount;
+            } else {
+                maturityLiabilities[token][bucket] = 0;
+            }
+        }
+
+        _ensureLiquidity(token, amount);
+        IERC20(token).safeTransfer(recipient, amount);
+
+        emit DepositRedemptionPaid(token, amount, recipient);
+    }
+
+    function writeOffExpiredDeposit(
+        address token,
+        uint256 principal,
+        uint256 liability,
+        uint256 maturityTimestamp
+    ) external override onlyRole(DEPOSIT_MANAGER_ROLE) nonReentrant {
+        require(token != address(0), "token=0");
+        require(liability > 0, "liability=0");
+        require(principal <= liability, "principal>liability");
+        require(depositLiabilities[token] >= liability, "exceeds deposit liabilities");
+
+        // Reduce deposit accounting — principal and liability tracked separately
+        depositLiabilities[token] -= liability;
+        if (depositClaims[token] >= principal) {
+            depositClaims[token] -= principal;
+        } else {
+            depositClaims[token] = 0;
+        }
+
+        // Clear maturity bucket
+        uint256 bucket = _toBucket(maturityTimestamp);
+        if (maturityLiabilities[token][bucket] >= liability) {
+            maturityLiabilities[token][bucket] -= liability;
+        } else {
+            maturityLiabilities[token][bucket] = 0;
+        }
+
+        // Track the principal as treasury-owned capital (NOT protocolRevenue).
+        // protocolRevenue is for realized strategy yield — expired deposits are different.
+        // The interest portion was never funded, so only the principal is real capital.
+        ownedCapital[token] += principal;
+
+        emit DepositExpiredWriteOff(token, principal, liability, maturityTimestamp);
+    }
+
+    function settleEarlyRedemptionForfeit(
+        address token,
+        uint256 breakFee,
+        uint256 unaccruedInterest,
+        uint256 principalInForfeit,
+        uint256 maturityTimestamp
+    ) external override onlyRole(DEPOSIT_MANAGER_ROLE) nonReentrant {
+        require(token != address(0), "token=0");
+        uint256 totalForfeit = breakFee + unaccruedInterest;
+        require(totalForfeit > 0, "nothing to settle");
+        require(principalInForfeit <= totalForfeit, "principal>forfeit");
+        require(depositLiabilities[token] >= totalForfeit, "exceeds deposit liabilities");
+
+        // Reduce total liabilities by the full forfeited amount
+        depositLiabilities[token] -= totalForfeit;
+
+        // Reduce claims by principal portion only
+        if (depositClaims[token] >= principalInForfeit) {
+            depositClaims[token] -= principalInForfeit;
+        } else {
+            depositClaims[token] = 0;
+        }
+
+        // Reduce maturity bucket
+        if (maturityTimestamp > 0) {
+            uint256 bucket = _toBucket(maturityTimestamp);
+            if (maturityLiabilities[token][bucket] >= totalForfeit) {
+                maturityLiabilities[token][bucket] -= totalForfeit;
+            } else {
+                maturityLiabilities[token][bucket] = 0;
+            }
+        }
+
+        // Do NOT credit protocolRevenue here — break fee revenue recognition requires
+        // explicit realized-cash policy. Park the retained principal in ownedCapital.
+        // The unfunded interest portion simply disappears from liabilities.
+        // To realize the penalty as revenue later, use a separate admin operation.
+        if (principalInForfeit > 0) {
+            ownedCapital[token] += principalInForfeit;
+        }
+    }
+
+    function disburseExpiredFunds(
+        address token,
+        uint256 amount,
+        address recipient
+    ) external override onlyRole(DEPOSIT_MANAGER_ROLE) nonReentrant {
+        require(token != address(0), "token=0");
+        require(amount > 0, "amount=0");
+        require(recipient != address(0), "recipient=0");
+        require(ownedCapital[token] >= amount, "exceeds owned capital");
+
+        ownedCapital[token] -= amount;
+
+        _ensureLiquidity(token, amount);
+        IERC20(token).safeTransfer(recipient, amount);
     }
 
     function adjustDepositOnMerge(
@@ -468,7 +607,8 @@ contract TreasuryUpgradeable is
 
         uint256 onChain = IERC20(token).balanceOf(address(this));
         uint256 tracked = depositLiabilities[token] + collateralClaims[token]
-                        + lendingPoolReserves[token] + protocolRevenue[token];
+                        + lendingPoolReserves[token] + protocolRevenue[token]
+                        + ownedCapital[token];
         uint256 untracked = onChain > tracked ? onChain - tracked : 0;
         require(amount <= untracked, "would sweep tracked funds");
 
@@ -520,6 +660,7 @@ contract TreasuryUpgradeable is
         collateralClaims[token] = 0;
         lendingPoolReserves[token] = 0;
         protocolRevenue[token] = 0;
+        ownedCapital[token] = 0;
 
         IERC20(token).safeTransfer(recipient, toWithdraw);
 
@@ -542,7 +683,8 @@ contract TreasuryUpgradeable is
             lendingPool: lendingPoolReserves[token],
             deployed: deployed,
             protocolRevenue: protocolRevenue[token],
-            reserveRatioBps: reserveRatioBps[token]
+            reserveRatioBps: reserveRatioBps[token],
+            ownedCapital: ownedCapital[token]
         });
     }
 
@@ -657,7 +799,8 @@ contract TreasuryUpgradeable is
                 lendingPool: lendingPoolReserves[t],
                 deployed: _totalDeployed(t),
                 protocolRevenue: protocolRevenue[t],
-                reserveRatioBps: reserveRatioBps[t]
+                reserveRatioBps: reserveRatioBps[t],
+                ownedCapital: ownedCapital[t]
             });
         }
     }
@@ -785,5 +928,5 @@ contract TreasuryUpgradeable is
     // ============================================================================
 
     /// @dev Reserved storage space for future upgrades
-    uint256[40] private __gap;
+    uint256[39] private __gap;
 }

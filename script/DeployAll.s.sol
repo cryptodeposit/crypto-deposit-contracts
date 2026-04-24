@@ -5,7 +5,9 @@ import "forge-std/Script.sol";
 import {StableTokenUpgradeable} from "../src/StableTokenUpgradeable.sol";
 import {ComplianceRegistryUpgradeable} from "../src/ComplianceRegistryUpgradeable.sol";
 import {TravelRuleRegistryUpgradeable} from "../src/TravelRuleUpgradeable.sol";
-import {DiscountBillERC5095Upgradeable} from "../src/DiscountBillERC5095Upgradeable.sol";
+import {DiscountBillCore} from "../src/DiscountBillCore.sol";
+import {DiscountBillLifecycle} from "../src/DiscountBillLifecycle.sol";
+import {DiscountBillCampaigns} from "../src/DiscountBillCampaigns.sol";
 import {BillTokenFactory} from "../src/BillTokenFactory.sol";
 import {TreasuryUpgradeable} from "../src/TreasuryUpgradeable.sol";
 import {TreasuryYieldManager} from "../src/TreasuryYieldManager.sol";
@@ -16,11 +18,16 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title DeployAll
- * @notice Deploys all crypto-deposit contracts to local chains
- * @dev Outputs JSON-formatted addresses for frontend consumption
+ * @notice Deploys all crypto-deposit contracts (3-contract DiscountBill split)
+ * @dev PRODUCTION: always use --ledger. Never use --private-key for mainnet/L2.
  *
- * Usage:
- *   forge script script/DeployAll.s.sol:DeployAll --rpc-url $RPC --broadcast --private-key $PRIVATE_KEY0
+ * Usage (production — Ledger):
+ *   ADDRESS0=0xb109... forge script script/DeployAll.s.sol:DeployAll \
+ *     --rpc-url $RPC --broadcast --ledger --sender 0xb109... --verify --etherscan-api-key $KEY
+ *
+ * Usage (testnet only):
+ *   ADDRESS0=0x940b... forge script script/DeployAll.s.sol:DeployAll \
+ *     --rpc-url $RPC --broadcast --private-key $KEY
  */
 contract DeployAll is Script {
     // Chainalysis free sanctions oracle (mainnet)
@@ -53,11 +60,12 @@ contract DeployAll is Script {
     }
 
     function run() external returns (Deployment memory) {
-        uint256 deployerKey = vm.envUint("PRIVATE_KEY0");
+        // PRODUCTION: always use --ledger. Never pass a private key for mainnet.
+        // The signer comes from CLI (--ledger --sender or --private-key for testnets only).
         address admin = vm.envAddress("ADDRESS0");
         address issuer = admin;
 
-        vm.startBroadcast(deployerKey);
+        vm.startBroadcast();
 
         // 1. Deploy StableToken (Mock USD)
         address stableImpl = address(new StableTokenUpgradeable());
@@ -109,14 +117,18 @@ contract DeployAll is Script {
         TravelRuleRegistryUpgradeable travel = TravelRuleRegistryUpgradeable(travelProxy);
 
         // 4. Deploy DiscountBillERC5095 (main deposit contract)
-        address billImpl = address(new DiscountBillERC5095Upgradeable());
+        DiscountBillLifecycle lifecycle = new DiscountBillLifecycle();
+        DiscountBillCampaigns campaigns = new DiscountBillCampaigns();
+        address billImpl = address(new DiscountBillCore());
         address billProxy = address(
             new ERC1967Proxy(
                 billImpl,
-                abi.encodeCall(DiscountBillERC5095Upgradeable.initialize, (admin, issuer, compliance, travel))
+                abi.encodeCall(DiscountBillCore.initialize, (admin, issuer, compliance, travel))
             )
         );
-        DiscountBillERC5095Upgradeable discountBill = DiscountBillERC5095Upgradeable(billProxy);
+        DiscountBillCore discountBill = DiscountBillCore(payable(billProxy));
+        discountBill.setLifecycleImpl(address(lifecycle));
+        discountBill.setCampaignsImpl(address(campaigns));
 
         // 4b. Deploy BillTokenFactory and connect to bill
         BillTokenFactory billTokenFactory = new BillTokenFactory();

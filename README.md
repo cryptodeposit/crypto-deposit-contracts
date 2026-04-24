@@ -57,4 +57,4 @@ This code has been deployed to production. If you discover a vulnerability, plea
 
 MIT — see [LICENSE](LICENSE).
 
-Copyright (c) 2026 Basseterre LLC
+Copyright (c) 2026 Basseterre Holdings Limited
